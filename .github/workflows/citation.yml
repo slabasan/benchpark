@@ -1,0 +1,4 @@
+- name: Validate CITATION.cff
+    uses: dieghernan/cff-validator@v3
+    with:
+      citation-path: "CITATION.cff"
