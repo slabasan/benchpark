@@ -1,4 +1,4 @@
-.legacy_test_clusters: &legacy_test_clusters
+.test_clusters: &test_clusters
   parallel:
     matrix:
       - HOST: tioga
@@ -11,19 +11,18 @@
         ARCHCONFIG: LLNL-Ruby-icelake-OmniPath
         SYSTEMHASH: Cts-6d48f81
 
-#.test_clusters: &test_clusters
-#  parallel:
-#    matrix:
-#      - HOST: dane
-#        SYSTEMHASH: Cts-2c51a80
-#      - HOST: ruby
-#        SYSTEMHASH: Cts-6d48f81
+.test_benchmarks: &test_benchmarks
+  parallel:
+    matrix:
+      - BENCHMARK:
+          - kripke
+          - saxpy
 
 .on_machine:
   tags:
     - shell
     - $HOST
-  <<: *legacy_test_clusters
+  <<: *test_clusters
   rules:
     # Only report failure if the pipeline failed.
     - if: '$CI_JOB_NAME =~ /status_failure/'
@@ -65,13 +64,12 @@ status_failure:
     - *status_report
   when: on_failure
 
-# legacy run on tioga, dane, ruby, saxpy openmp
 legacy_test_run:
   stage: test
   tags:
     - $HOST
     - shell
-  <<: *legacy_test_clusters
+  <<: *test_clusters
   rules:
     - changes:
         - .gitlab-ci.yml
@@ -93,15 +91,9 @@ legacy_test_run:
     - ramble --workspace-dir . --disable-progress-bar --disable-logger workspace setup
     # Run Saxpy Experiments
     - ramble --workspace-dir . --disable-progress-bar --disable-logger on
+    # Analyze Experiments
+    - ramble --workspace-dir . --disable-progress-bar workspace analyze
 
-.test_benchmarks: &test_benchmarks
-  parallel:
-    matrix:
-      - BENCHMARK:
-          - kripke
-          - saxpy
-
-# new run on tioga kripke/saxpy rocm
 test_run_tioga_rocm:
   stage: test
   tags:
@@ -133,13 +125,12 @@ test_run_tioga_rocm:
     - ramble --workspace-dir . --disable-progress-bar --disable-logger on
   <<: *test_benchmarks
 
-# new run on tioga, dane, ruby kripke openmp
 test_run_kripke_openmp:
   stage: test
   tags:
     - $HOST
     - shell
-  <<: *legacy_test_clusters
+  <<: *test_clusters
   rules:
     - changes:
         - .gitlab-ci.yml
@@ -153,7 +144,12 @@ test_run_kripke_openmp:
   script:
     - . /usr/workspace/benchpark-dev/benchpark-venv/$SYS_TYPE/bin/activate
     # Initialize system & experiment
-    - if [ "$HOST" == "tioga" ]; then ./bin/benchpark system init --dest=tioga-system tioga ~gtl; else ./bin/benchpark system init --dest=$HOST-system cts cluster=$HOST; fi
+    - |
+        if [ "$HOST" == "tioga" ]; then
+            ./bin/benchpark system init --dest=tioga-system tioga ~gtl
+        else
+            ./bin/benchpark system init --dest=$HOST-system cts cluster=$HOST
+        fi
     - ./bin/benchpark experiment init --dest=kripke-benchmark kripke programming_model=openmp
     # Build Workspace
     - ./bin/benchpark setup kripke-benchmark $HOST-system workspace/
@@ -164,14 +160,15 @@ test_run_kripke_openmp:
     - ramble --workspace-dir . --disable-progress-bar --disable-logger workspace setup
     # Run Experiments
     - ramble --workspace-dir . --disable-progress-bar --disable-logger on
+    # Analyze Experiments
+    - ramble --workspace-dir . --disable-progress-bar workspace analyze
 
-# new run on tioga, dane, ruby saxpy openmp
 test_run_saxpy_openmp:
   stage: test
   tags:
     - $HOST
     - shell
-  <<: *legacy_test_clusters
+  <<: *test_clusters
   rules:
     - changes:
         - .gitlab-ci.yml
@@ -185,7 +182,12 @@ test_run_saxpy_openmp:
   script:
     - . /usr/workspace/benchpark-dev/benchpark-venv/$SYS_TYPE/bin/activate
     # Initialize system & experiment
-    - if [ "$HOST" == "tioga" ]; then ./bin/benchpark system init --dest=tioga-system tioga ~gtl; else ./bin/benchpark system init --dest=$HOST-system cts cluster=$HOST; fi
+    - |
+        if [ "$HOST" == "tioga" ]; then
+            ./bin/benchpark system init --dest=tioga-system tioga ~gtl
+        else
+            ./bin/benchpark system init --dest=$HOST-system cts cluster=$HOST
+        fi
     - ./bin/benchpark experiment init --dest=saxpy-benchmark saxpy programming_model=openmp
     # Build Workspace
     - ./bin/benchpark setup saxpy-benchmark $HOST-system workspace/
@@ -196,3 +198,5 @@ test_run_saxpy_openmp:
     - ramble --workspace-dir . --disable-progress-bar --disable-logger workspace setup
     # Run Experiments
     - ramble --workspace-dir . --disable-progress-bar --disable-logger on
+    # Analyze Experiments
+    - ramble --workspace-dir . --disable-progress-bar workspace analyze
