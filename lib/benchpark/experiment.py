@@ -130,8 +130,8 @@ class Experiment(ExperimentSystemBase, SingleNode):
         return []
 
     def compute_modifiers_section_wrapper(self):
-        # by default we use the allocation modifier and no others
-        modifier_list = [{"name": "allocation"}]
+        # by default we use the allocation and exit code modifiers
+        modifier_list = [{"name": "allocation"}, {"name": "exit-code"}]
         modifier_list += self.compute_modifiers_section()
         for cls in self.helpers:
             modifier_list += cls.compute_modifiers_section()
