@@ -115,7 +115,7 @@ test_run_tioga_rocm:
     - . /usr/workspace/benchpark-dev/benchpark-venv/$SYS_TYPE/bin/activate
     # Initialize system & experiment
     - ./bin/benchpark system init --dest=tioga-system tioga ~gtl
-    - ./bin/benchpark experiment init --dest=${BENCHMARK}-benchmark ${BENCHMARK} programming_model=rocm
+    - ./bin/benchpark experiment init --dest=${BENCHMARK}-benchmark ${BENCHMARK} rocm=oui
     # Build Workspace
     - ./bin/benchpark setup ${BENCHMARK}-benchmark tioga-system workspace/
     # Setup Ramble & Spack
@@ -152,7 +152,7 @@ test_run_kripke_openmp:
         else
             ./bin/benchpark system init --dest=$HOST-system cts cluster=$HOST
         fi
-    - ./bin/benchpark experiment init --dest=kripke-benchmark kripke programming_model=openmp
+    - ./bin/benchpark experiment init --dest=kripke-benchmark kripke openmp=oui
     # Build Workspace
     - ./bin/benchpark setup kripke-benchmark $HOST-system workspace/
     # Setup Ramble & Spack
@@ -192,7 +192,7 @@ test_run_saxpy_openmp:
         else
             ./bin/benchpark system init --dest=$HOST-system cts cluster=$HOST
         fi
-    - ./bin/benchpark experiment init --dest=saxpy-benchmark saxpy programming_model=openmp
+    - ./bin/benchpark experiment init --dest=saxpy-benchmark saxpy openmp=oui
     # Build Workspace
     - ./bin/benchpark setup saxpy-benchmark $HOST-system workspace/
     # Setup Ramble & Spack
