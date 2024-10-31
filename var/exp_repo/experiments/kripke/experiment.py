@@ -1,50 +1,56 @@
+# Copyright 2023 Lawrence Livermore National Security, LLC and other
+# Benchpark Project Developers. See the top-level COPYRIGHT file for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from benchpark.error import BenchparkError
 from benchpark.directives import variant
 from benchpark.experiment import Experiment
+from benchpark.openmp import OpenMPExperiment
+from benchpark.cuda import CudaExperiment
+from benchpark.rocm import ROCmExperiment
+from benchpark.scaling import StrongScaling
+from benchpark.scaling import WeakScaling
+from benchpark.scaling import ThroughputScaling
 
 
-class Kripke(Experiment):
+class Kripke(
+    Experiment,
+    OpenMPExperiment,
+    CudaExperiment,
+    ROCmExperiment,
+    StrongScaling,
+    WeakScaling,
+    ThroughputScaling,
+):
     variant(
-        "programming_model",
-        default="openmp",
-        values=("openmp", "cuda", "rocm"),
-        description="node-level parallelism model",
+        "workload",
+        default="kripke",
+        description="problem1 or problem2",
     )
 
     variant(
-        "scaling",
-        default="single-node",
-        values=("single-node", "weak", "strong"),
-        description="Single node, weak scaling, or strong scaling study",
+        "version",
+        default="develop",
+        description="app version",
     )
 
     def compute_applications_section(self):
-        self.workload = "kripke"
+        # TODO: Replace with conflicts clause
+        scaling_modes = {
+            "strong": self.spec.satisfies("strong=oui"),
+            "weak": self.spec.satisfies("weak=oui"),
+            "throughput": self.spec.satisfies("throughput=oui"),
+            "single_node": self.spec.satisfies("single_node=oui"),
+        }
 
-        npx = "npx"
-        npy = "npy"
-        npz = "npz"
-        nzx = "nzx"
-        nzy = "nzy"
-        nzz = "nzz"
-        num_procs = "{npx} * {npy} * {npz}"
+        scaling_mode_enabled = [key for key, value in scaling_modes.items() if value]
+        if len(scaling_mode_enabled) != 1:
+            raise BenchparkError(
+                f"Only one type of scaling per experiment is allowed for application package {self.name}"
+            )
 
-        variables = {}
-
-        if self.spec.satisfies("programming_model=openmp"):
-            variables["arch"] = "OpenMP"
-            variables["n_ranks"] = num_procs
-            variables["n_threads_per_proc"] = 1
-            n_resources = "{n_ranks}_{n_threads_per_proc}"
-        elif self.spec.satisfies("programming_model=cuda"):
-            variables["arch"] = "CUDA"
-            variables["n_gpus"] = num_procs
-            n_resources = "{n_gpus}"
-        elif self.spec.satisfies("programming_model=rocm"):
-            variables["arch"] = "HIP"
-            variables["n_gpus"] = num_procs
-            n_resources = "{n_gpus}"
-
-        variables |= {
+        input_variables = {
             "ngroups": 64,
             "gs": 1,
             "nquad": 128,
@@ -53,115 +59,98 @@ class Kripke(Experiment):
         }
 
         # Number of processes in each dimension
-        initial_np = [2, 2, 1]
+        num_procs = {"npx": 2, "npy": 2, "npz": 1}
 
         # Number of zones in each dimension, per process
-        initial_nz = [64, 64, 32]
+        problem_sizes = {"nzx": 64, "nzy": 64, "nzz": 32}
 
-        if self.spec.satisfies("scaling=single-node"):
-            variables[npx] = initial_np[0]
-            variables[npy] = initial_np[1]
-            variables[npz] = initial_np[2]
-            variables[nzx] = initial_nz[0]
-            variables[nzy] = initial_nz[1]
-            variables[nzz] = initial_nz[2]
-        else:
-            input_params = {}
-            if self.spec.satisfies("scaling=strong"):
-                scaling_variable = (npx, npy, npz)
-                input_params[scaling_variable] = initial_np
-                variables[nzx] = initial_nz[0]
-                variables[nzy] = initial_nz[1]
-                variables[nzz] = initial_nz[2]
-            if self.spec.satisfies("scaling=weak"):
-                scaling_variable = (npx, npy, npz)
-                input_params[scaling_variable] = initial_np
-                input_params[(nzx, nzy, nzz)] = initial_nz
-            variables |= self.scale_experiment_variables(
-                input_params,
+        for k, v in input_variables.items():
+            self.add_experiment_variable(k, v, True)
+
+        if self.spec.satisfies("single_node=oui"):
+            n_resources = 1
+            # TODO: Check if n_ranks / n_resources_per_node <= 1
+            for pk, pv in num_procs.items():
+                self.add_experiment_variable(pk, pv, True)
+                n_resources *= pv
+            for nk, nv in problem_sizes.items():
+                self.add_experiment_variable(nk, nv, True)
+        elif self.spec.satisfies("throughput=oui"):
+            n_resources = 1
+            for pk, pv in num_procs.items():
+                self.add_experiment_variable(pk, pv, True)
+                n_resources *= pv
+            scaled_variables = self.generate_throughput_scaling_params(
+                {tuple(problem_sizes.keys()): list(problem_sizes.values())},
                 int(self.spec.variants["scaling-factor"][0]),
                 int(self.spec.variants["scaling-iterations"][0]),
-                scaling_variable,
             )
+            for nk, nv in scaled_variables.items():
+                self.add_experiment_variable(nk, nv, True)
+        elif self.spec.satisfies("strong=oui"):
+            scaled_variables = self.generate_strong_scaling_params(
+                {tuple(num_procs.keys()): list(num_procs.values())},
+                int(self.spec.variants["scaling-factor"][0]),
+                int(self.spec.variants["scaling-iterations"][0]),
+            )
+            for pk, pv in scaled_variables.items():
+                self.add_experiment_variable(pk, pv, True)
+            n_resources = [
+                x * y * z
+                for x, y, z in zip(
+                    *(scaled_variables[p] for p in num_procs if p in scaled_variables)
+                )
+            ]
+            for nk, nv in problem_sizes.items():
+                self.add_experiment_variable(nk, nv, True)
+        elif self.spec.satisfies("weak=oui"):
+            scaled_variables = self.generate_weak_scaling_params(
+                {tuple(num_procs.keys()): list(num_procs.values())},
+                {tuple(problem_sizes.keys()): list(problem_sizes.values())},
+                int(self.spec.variants["scaling-factor"][0]),
+                int(self.spec.variants["scaling-iterations"][0]),
+            )
+            n_resources = [
+                x * y * z
+                for x, y, z in zip(
+                    *(scaled_variables[p] for p in num_procs if p in scaled_variables)
+                )
+            ]
+            for k, v in scaled_variables.items():
+                self.add_experiment_variable(k, v, True)
 
-        experiment_name_template = f"kripke_{self.spec.variants['programming_model'][0]}_{self.spec.variants['scaling'][0]}_{{n_nodes}}_{n_resources}_{{ngroups}}_{{gs}}_{{nquad}}_{{ds}}_{{lorder}}_{{{nzx}}}_{{{nzy}}}_{{{nzz}}}_{{{npx}}}_{{{npy}}}_{{{npz}}}"
+        if self.spec.satisfies("openmp=oui"):
+            self.add_experiment_variable("n_ranks", n_resources, True)
+            self.add_experiment_variable("n_threads_per_proc", 1, True)
+        elif self.spec.satisfies("cuda=oui") or self.spec.satisfies("rocm=oui"):
+            self.add_experiment_variable("n_gpus", n_resources, True)
 
-        return {
-            self.spec.name: {
-                "workloads": {
-                    self.workload: {
-                        "experiments": {
-                            experiment_name_template: {
-                                "variants": {
-                                    "package_manager": "spack",
-                                },
-                                "variables": variables,
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        if self.spec.satisfies("openmp=oui"):
+            self.add_experiment_variable("arch", "OpenMP")
+        elif self.spec.satisfies("cuda=oui"):
+            self.add_experiment_variable("arch", "CUDA")
+        elif self.spec.satisfies("rocm=oui"):
+            self.add_experiment_variable("arch", "HIP")
 
     def compute_spack_section(self):
-        app_name = self.spec.name
-
-        # set package versions
-        app_version = "develop"
-        chai_version = "2024.02"
-        # caliper_version = "master"
+        # get package version
+        app_version = self.spec.variants["version"][0]
 
         # get system config options
         # TODO: Get compiler/mpi/package handles directly from system.py
         system_specs = {}
         system_specs["compiler"] = "default-compiler"
         system_specs["mpi"] = "default-mpi"
-        if self.spec.satisfies("programming_model=cuda"):
+        if self.spec.satisfies("cuda=oui"):
             system_specs["cuda_version"] = "{default_cuda_version}"
             system_specs["cuda_arch"] = "{cuda_arch}"
-        if self.spec.satisfies("programming_model=rocm"):
+        if self.spec.satisfies("rocm=oui"):
             system_specs["rocm_arch"] = "{rocm_arch}"
 
         # set package spack specs
-        package_specs = {}
-        if self.spec.satisfies("programming_model=cuda"):
-            package_specs["cuda"] = {
-                "pkg_spec": "cuda@{}+allow-unsupported-compilers".format(
-                    system_specs["cuda_version"]
-                ),
-                "compiler": system_specs["compiler"],
-            }
-        package_specs[system_specs["mpi"]] = (
-            {}
-        )  # empty package_specs value implies external package
-        package_specs["chai"] = {
-            "pkg_spec": f"chai@{chai_version} +mpi",
-            "compiler": system_specs["compiler"],
-        }
-        package_specs[app_name] = {
-            "pkg_spec": f"kripke@{app_version} +mpi",
-            "compiler": system_specs["compiler"],
-        }
+        # empty package_specs value implies external package
+        self.add_spack_spec(system_specs["mpi"])
 
-        if self.spec.satisfies("programming_model=openmp"):
-            package_specs["chai"]["pkg_spec"] += "+openmp"
-            package_specs[app_name]["pkg_spec"] += "+openmp"
-        elif self.spec.satisfies("programming_model=cuda"):
-            package_specs["chai"]["pkg_spec"] += "+cuda cuda_arch={}".format(
-                system_specs["cuda_arch"]
-            )
-            package_specs[app_name]["pkg_spec"] += "+cuda cuda_arch={}".format(
-                system_specs["cuda_arch"]
-            )
-        elif self.spec.satisfies("programming_model=rocm"):
-            package_specs["chai"]["pkg_spec"] += "+rocm amdgpu_target={}".format(
-                system_specs["rocm_arch"]
-            )
-            package_specs[app_name]["pkg_spec"] += "+rocm amdgpu_target={}".format(
-                system_specs["rocm_arch"]
-            )
-
-        return {
-            "packages": {k: v for k, v in package_specs.items() if v},
-            "environments": {app_name: {"packages": list(package_specs.keys())}},
-        }
+        self.add_spack_spec(
+            self.name, [f"kripke@{app_version} +mpi", system_specs["compiler"]]
+        )
